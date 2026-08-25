@@ -1,0 +1,59 @@
+name: Build Orange Pi R1 and Zero
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        board:
+          - orangepi-r1
+          - orangepizero
+
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check board support
+        run: |
+          echo "Looking for ${{ matrix.board }}"
+          find config/boards -maxdepth 1 \
+            -name "${{ matrix.board }}.*" \
+            -print
+
+          if ! find config/boards -maxdepth 1 \
+            -name "${{ matrix.board }}.*" \
+            -print -quit | grep -q .; then
+            echo "Board ${{ matrix.board }} is not present in current Armbian main"
+            exit 1
+          fi
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo apt-get clean
+          df -h
+
+      - name: Build minimal Debian Bookworm
+        run: |
+          ./compile.sh \
+            BOARD="${{ matrix.board }}" \
+            BRANCH=current \
+            RELEASE=bookworm \
+            BUILD_MINIMAL=yes \
+            BUILD_DESKTOP=no \
+            KERNEL_ONLY=no \
+            KERNEL_CONFIGURE=no \
+            COMPRESS_OUTPUTIMAGE=xz
+
+      - name: Upload image
+        uses: actions/upload-artifact@v4
+        with:
+          name: armbian-bookworm-${{ matrix.board }}
+          path: output/images/*
+          if-no-files-found: error
