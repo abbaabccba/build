@@ -3,14 +3,19 @@ name: Build Armbian
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
+    name: build (${{ matrix.board }})
+
     strategy:
       fail-fast: false
       matrix:
         board:
-          - orangepi-r1
           - orangepizero
+          - orangepi-r1
 
     runs-on: ubuntu-24.04
 
@@ -23,33 +28,128 @@ jobs:
           dotnet: true
           haskell: true
           large-packages: true
-          docker-images: true
+          docker-images: false
           swap-storage: true
 
       - name: Check disk space
-        run: df -h
+        run: |
+          echo "=== Disk ==="
+          df -h
+
+          echo
+          echo "=== Memory ==="
+          free -h
 
       - name: Checkout Armbian
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Check board config
+        shell: bash
+        run: |
+          set -e
+
+          echo "Checking board: ${{ matrix.board }}"
+
+          find config/boards \
+            -maxdepth 1 \
+            -type f \
+            -name "${{ matrix.board }}.*" \
+            -print
+
+          if ! find config/boards \
+            -maxdepth 1 \
+            -type f \
+            -name "${{ matrix.board }}.*" \
+            -print -quit | grep -q .; then
+            echo "::error::Board '${{ matrix.board }}' was not found in config/boards"
+            exit 1
+          fi
+
+      - name: Setup QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: all
+
+      - name: Check QEMU and binfmt
+        shell: bash
+        run: |
+          echo "=== binfmt_misc ==="
+          ls -la /proc/sys/fs/binfmt_misc || true
+
+          echo
+          echo "=== Registered interpreters ==="
+          for f in /proc/sys/fs/binfmt_misc/*; do
+            [ -f "$f" ] || continue
+            echo "----- $f -----"
+            cat "$f" || true
+          done
+
+          echo
+          echo "=== Docker ==="
+          docker version
+
+          echo
+          echo "=== QEMU ARM test ==="
+          docker run --rm --platform linux/arm/v7 \
+            alpine:latest \
+            uname -m
+
+          echo
+          echo "=== QEMU ARM64 test ==="
+          docker run --rm --platform linux/arm64 \
+            alpine:latest \
+            uname -m
 
       - name: Build Armbian
+        shell: bash
         run: |
+          set -o pipefail
+
           ./compile.sh \
             BOARD="${{ matrix.board }}" \
             BRANCH=current \
             RELEASE=bookworm \
             BUILD_MINIMAL=yes \
             BUILD_DESKTOP=no \
+            KERNEL_ONLY=no \
             KERNEL_CONFIGURE=no \
             COMPRESS_OUTPUTIMAGE=xz
 
-      - name: Check disk space after build
+      - name: Show output
         if: always()
-        run: df -h
+        shell: bash
+        run: |
+          echo "=== Disk after build ==="
+          df -h
 
-      - name: Upload image
+          echo
+          echo "=== Images ==="
+          find output/images -maxdepth 2 -type f -print 2>/dev/null || true
+
+          echo
+          echo "=== Logs ==="
+          find output/logs -maxdepth 2 -type f -print 2>/dev/null || true
+
+      - name: Upload Armbian Image
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: armbian-${{ matrix.board }}-bookworm
-          path: output/images/*
+          path: |
+            output/images/*
           if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+      - name: Upload Build Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.board }}
+          path: |
+            output/logs/*
+          if-no-files-found: ignore
+          compression-level: 6
+          retention-days: 7
