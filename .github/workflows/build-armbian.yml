@@ -33,11 +33,7 @@ jobs:
 
       - name: Check disk space
         run: |
-          echo "=== Disk ==="
           df -h
-
-          echo
-          echo "=== Memory ==="
           free -h
 
       - name: Checkout Armbian
@@ -72,33 +68,16 @@ jobs:
         with:
           platforms: all
 
-      - name: Check QEMU and binfmt
+      - name: Check QEMU ARM
         shell: bash
         run: |
-          echo "=== binfmt_misc ==="
-          ls -la /proc/sys/fs/binfmt_misc || true
+          echo "=== qemu-arm ==="
+          cat /proc/sys/fs/binfmt_misc/qemu-arm
 
           echo
-          echo "=== Registered interpreters ==="
-          for f in /proc/sys/fs/binfmt_misc/*; do
-            [ -f "$f" ] || continue
-            echo "----- $f -----"
-            cat "$f" || true
-          done
-
-          echo
-          echo "=== Docker ==="
-          docker version
-
-          echo
-          echo "=== QEMU ARM test ==="
-          docker run --rm --platform linux/arm/v7 \
-            alpine:latest \
-            uname -m
-
-          echo
-          echo "=== QEMU ARM64 test ==="
-          docker run --rm --platform linux/arm64 \
+          echo "=== ARMv7 execution test ==="
+          docker run --rm \
+            --platform linux/arm/v7 \
             alpine:latest \
             uname -m
 
@@ -107,13 +86,12 @@ jobs:
         run: |
           set -o pipefail
 
-          ./compile.sh \
+          ./compile.sh build \
             BOARD="${{ matrix.board }}" \
             BRANCH=current \
             RELEASE=bookworm \
             BUILD_MINIMAL=yes \
             BUILD_DESKTOP=no \
-            KERNEL_ONLY=no \
             KERNEL_CONFIGURE=no \
             COMPRESS_OUTPUTIMAGE=xz
 
@@ -126,19 +104,24 @@ jobs:
 
           echo
           echo "=== Images ==="
-          find output/images -maxdepth 2 -type f -print 2>/dev/null || true
+          find output/images \
+            -maxdepth 2 \
+            -type f \
+            -print 2>/dev/null || true
 
           echo
           echo "=== Logs ==="
-          find output/logs -maxdepth 2 -type f -print 2>/dev/null || true
+          find output/logs \
+            -maxdepth 2 \
+            -type f \
+            -print 2>/dev/null || true
 
       - name: Upload Armbian Image
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: armbian-${{ matrix.board }}-bookworm
-          path: |
-            output/images/*
+          path: output/images/*
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
@@ -148,8 +131,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: logs-${{ matrix.board }}
-          path: |
-            output/logs/*
+          path: output/logs/*
           if-no-files-found: ignore
           compression-level: 6
           retention-days: 7
